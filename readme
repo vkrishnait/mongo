@@ -1,0 +1,290 @@
+step:1
+++++++++
+
+cat secret.yml
+apiVersion: v1
+kind: Secret
+metadata:
+ name: mongodb-secret
+type: Opaque
+data:
+  mongo-username: dXNlcm5hbWU=
+  mongo-password: cGFzcw==
+
+k apply -f secret.yml
+k get secret
+
+step:2
+++++++
+
+cat mongo-db.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: mongodb-deployment
+    labels:
+     app: mongodb
+spec:
+ replicas: 2
+ selector:
+  matchLabels:
+     app: mongodb
+ template:
+     metadata:
+       labels:
+        app: mongodb
+     spec:
+      containers:
+       - name: mongodb
+         image: mongo
+         ports:
+          - containerPort: 27017
+         env:
+          - name: MONGO_INITDB_ROOT_USERNAME
+            valueFrom:
+              secretKeyRef:
+                name: mongodb-secret
+                key: mongo-username
+          - name: MONGO_INITDB_ROOT_PASSWORD
+            valueFrom:
+               secretKeyRef:
+                 name: mongodb-secret
+                 key: mongo-password
+
+k apply -f mongo-db.yml
+k get deployment
+k get rs
+k get pod -w
+
+$ k get pod -o wide
+NAME                                  READY   STATUS    RESTARTS   AGE     IP           NODE       NOMINATED NODE   READINESS GATES
+hello-kube                            1/1     Running   0          51m     172.17.0.3   minikube   <none>           <none>
+mongodb-deployment-555cdf5fdf-lf2lz   1/1     Running   0          4m25s   172.17.0.4   minikube   <none>           <none>
+mongodb-deployment-555cdf5fdf-z4bg5   1/1     Running   0          4m25s   172.17.0.5   minikube   <none>           <none>
+
+step:3
++++++++++
+
+cat mongo-db.yml
+....
+.....
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+ name: mongodb-service
+spec:
+ selector:
+   app: mongodb
+ ports:
+  - protocol: TCP
+    port: 8443
+    targetPort: 27017
+
+$ k apply -f mongo-db.yml
+deployment.apps/mongodb-deployment unchanged
+service/mongodb-service created
+
+$ k get svc
+NAME              TYPE           CLUSTER-IP       EXTERNAL-IP   PORT(S)        AGE
+hello-kube        LoadBalancer   10.100.235.101   <pending>     80:32405/TCP   64m
+kubernetes        ClusterIP      10.96.0.1        <none>        443/TCP        82m
+mongodb-service   ClusterIP      10.101.178.81    <none>        8443/TCP       38s
+
+Validation
+
+k describe service mongodb-service
+Name:              mongodb-service
+Namespace:         default
+Labels:            <none>
+Annotations:       <none>
+Selector:          app=mongodb
+Type:              ClusterIP
+IP Families:       <none>
+IP:                10.101.178.81
+IPs:               10.101.178.81
+Port:              <unset>  8443/TCP
+TargetPort:        27017/TCP
+Endpoints:         172.17.0.4:27017,172.17.0.5:27017
+Session Affinity:  None
+Events:            <none>
+
+k get pod -o wide
+NAME                                  READY   STATUS    RESTARTS   AGE   IP           NODE       NOMINATED NODE   READINESS GATES
+hello-kube                            1/1     Running   0          71m   172.17.0.3   minikube   <none>           <none>
+mongodb-deployment-555cdf5fdf-lf2lz   1/1     Running   0          23m   172.17.0.4   minikube   <none>           <none>
+mongodb-deployment-555cdf5fdf-z4bg5   1/1     Running   0          23m   172.17.0.5   minikube   <none>           <none>
+
+
+$ k get all | grep mongo
+pod/mongodb-deployment-555cdf5fdf-lf2lz   1/1     Running   0          25m
+pod/mongodb-deployment-555cdf5fdf-z4bg5   1/1     Running   0          25m
+service/mongodb-service   ClusterIP      10.101.178.81    <none>        8443/TCP       5m11s
+deployment.apps/mongodb-deployment   2/2     2            2           25m
+
+
+step:4
+++++++++
+
+$ cat config_map.yml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+ name: mongodb-configmap
+data:
+ database_url: mongodb-service
+
+k apply -f config_map.yml
+configmap/mongodb-configmap created
+
+k get configmap
+NAME                DATA   AGE
+kube-root-ca.crt    1      95m
+mongodb-configmap   1      12s
+
+step:5
+++++++++
+
+
+$ cat mongo-express.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: mongo-express
+    labels:
+     app: mongo-express
+spec:
+ replicas: 2
+ selector:
+  matchLabels:
+     app: mongo-express
+ template:
+     metadata:
+       labels:
+        app: mongo-express
+     spec:
+      containers:
+       - name: mongo-express
+         image: mongo-express
+         ports:
+          - containerPort: 8081
+         env:
+          - name: ME_CONFIG_MONGODB_ADMINUSERNAME
+            valueFrom:
+              secretKeyRef:
+                name: mongodb-secret
+                key: mongo-username
+          - name: ME_CONFIG_MONGODB_ADMINPASSWORD
+            valueFrom:
+               secretKeyRef:
+                 name: mongodb-secret
+                 key: mongo-password
+          - name: ME_CONFIG_MONGODB_SERVER
+            valueFrom:
+             configMapKeyRef:
+               name: mongodb-configmap
+               key: database_url
+
+ k apply -f mongo-express.yml
+deployment.apps/mongo-express created
+
+k get pods
+NAME                                  READY   STATUS    RESTARTS   AGE
+hello-kube                            1/1     Running   0          89m
+mongo-express-767598c4db-q7rjr        1/1     Running   0          63s
+mongo-express-767598c4db-xw5fs        1/1     Running   0          63s
+mongodb-deployment-555cdf5fdf-lf2lz   1/1     Running   0          42m
+mongodb-deployment-555cdf5fdf-z4bg5   1/1     Running   0          42m
+
+Step:6
++++++++++++++
+
+k get rs
+NAME                            DESIRED   CURRENT   READY   AGE
+mongo-express-767598c4db        2         2         2       98s
+mongodb-deployment-555cdf5fdf   2         2         2       42m
+
+k logs mongo-express-767598c4db-xw5fs
+
+
+Welcome to mongo-express
+------------------------
+
+
+Mongo Express server listening at http://0.0.0.0:8081
+Server is open to allow connections from anyone (0.0.0.0)
+basicAuth credentials are "admin:pass", it is recommended
+
+Step:7
+++++++
+cat mongo-express.yml
+...
+....
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+ name: mongo-express-service
+spec:
+ selector:
+   app: mongo-express
+ type: LoadBalancer
+ ports:
+  - protocol: TCP
+    port: 8081
+    targetPort: 8081
+    nodePort: 30000
+
+k apply -f mongo-express.yml
+deployment.apps/mongo-express unchanged
+service/mongo-express-service created
+
+ k get svc
+NAME                    TYPE           CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE
+hello-kube              LoadBalancer   10.100.235.101   <pending>     80:32405/TCP     93m
+kubernetes              ClusterIP      10.96.0.1        <none>        443/TCP          112m
+mongo-express-service   LoadBalancer   10.105.15.93     <pending>     8081:30000/TCP   11s
+mongodb-service         ClusterIP      10.101.178.81    <none>        8443/TCP         30m
+
+k describe service mongo-express-service
+Name:                     mongo-express-service
+Namespace:                default
+Labels:                   <none>
+Annotations:              <none>
+Selector:                 app=mongo-express
+Type:                     LoadBalancer
+IP Families:              <none>
+IP:                       10.105.15.93
+IPs:                      10.105.15.93
+Port:                     <unset>  8081/TCP
+TargetPort:               8081/TCP
+NodePort:                 <unset>  30000/TCP
+Endpoints:                172.17.0.6:8081,172.17.0.7:8081
+Session Affinity:         None
+External Traffic Policy:  Cluster
+Events:                   <none>
+
+minikube service mongo-express-service
+|-----------|-----------------------|-------------|---------------------------|
+| NAMESPACE |         NAME          | TARGET PORT |            URL            |
+|-----------|-----------------------|-------------|---------------------------|
+| default   | mongo-express-service |        8081 | http://192.168.64.9:30000 |
+|-----------|-----------------------|-------------|---------------------------|
+🎉  Opening service default/mongo-express-service in default browser...
+
+
+
+Final steps:
+++++++++++
+
+http://192.168.64.9:30000 <++++++++ when created test DB
+
+1. connect to external service 3000
+2. connect to mongo-express pod 8081
+3. connect to internal service 27071
+4. connect to mongo-db pod 27071
+
+++++
