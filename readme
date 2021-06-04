@@ -11,6 +11,9 @@ data:
   mongo-username: dXNlcm5hbWU=
   mongo-password: cGFzcw==
 
+echo -n "username" | base64
+echo -n "pass" | base64
+
 k apply -f secret.yml
 k get secret
 
